@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Game</title>
+    <link rel="stylesheet" href="style.css?v=13">
+</head>
+<body>
+    <main id="game-container">
+        <section id="mode-selection">
+            <h1><span class="king-icon">♚</span> Chess</h1>
+            <div id="mode-buttons">
+                <button id="mode-2p" class="mode-btn">2 Players</button>
+                <div id="mode-computer-group">
+                    <span class="vs-label">vs Computer</span>
+                    <div id="start-difficulty-selector">
+                        <button class="diff-btn" data-elo="10">Easy</button>
+                        <button class="diff-btn" data-elo="1094">Medium</button>
+                        <button class="diff-btn" data-elo="1620">Hard</button>
+                        <button class="diff-btn" data-elo="2871">Expert</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <section id="board-container" class="hidden">
+            <div id="chess-board" role="grid" aria-label="Chess board"></div>
+        </section>
+        <aside id="game-info" class="hidden">
+            <button id="sidebar-close-btn" aria-label="Close panel">&times;</button>
+            <div id="game-header">
+                <h2><span class="king-icon">♚</span> Chess</h2>
+            </div>
+            <div id="progress-bar"><div id="progress-fill"></div></div>
+            <div id="status-bar">
+                <div id="turn-indicator"></div>
+                <span id="status" aria-live="polite"></span>
+                <span id="captured-black-list" class="captured-list"></span>
+                <span id="captured-white-list" class="captured-list"></span>
+            </div>
+            <div id="move-history">
+                <h3>Move History</h3>
+                <div id="history-scroll">
+                    <ul id="history-list"></ul>
+                </div>
+            </div>
+            <div id="difficulty-display">
+                <span id="difficulty-label"></span>
+            </div>
+            <button id="reset-btn"><span class="btn-icon">↻</span> Reset</button>
+            <button id="back-to-menu-btn"><span class="btn-icon">←</span> Menu</button>
+        </aside>
+    </main>
+    <button id="info-toggle-btn" class="hidden" aria-label="Game info">ⓘ</button>
+    <div id="modal-overlay" class="hidden"></div>
+    <script type="importmap">
+    {
+        "imports": {
+            "chess.js": "./node_modules/chess.js/dist/esm/chess.js"
+        }
+    }
+    </script>
+    <script type="module" src="main.js?v=2"></script>
+</body>
+</html>
