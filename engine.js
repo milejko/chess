@@ -1,18 +1,5 @@
 import { Chess } from 'chess.js';
-
-const FILES = 'abcdefgh';
-
-function indexToAlgebraic(index) {
-    const rank = 8 - Math.floor(index / 8);
-    const file = FILES[index % 8];
-    return file + rank;
-}
-
-function algebraicToIndex(square) {
-    const col = FILES.indexOf(square[0]);
-    const row = 8 - parseInt(square[1]);
-    return row * 8 + col;
-}
+import { indexToAlgebraic, algebraicToIndex } from './utils.js';
 
 export const PIECES = {
     WHITE: 'w',
@@ -43,6 +30,12 @@ export class ChessEngine {
 
     get gameOver() {
         return this.chess.isGameOver();
+    }
+
+    // Direct access to the underlying chess.js instance.
+    // Intended for AI tree search (move/undo/fen/board) — UI code should use public API.
+    get chessInstance() {
+        return this.chess;
     }
 
     getPiece(index) {
@@ -117,6 +110,10 @@ export class ChessEngine {
 
     isStalemate() {
         return this.chess.isStalemate();
+    }
+
+    undoMove() {
+        return this.chess.undo() || null;
     }
 
     get history() {

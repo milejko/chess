@@ -24,7 +24,8 @@
             </div>
         </section>
         <section id="board-container" class="hidden">
-            <div id="chess-board" role="grid" aria-label="Chess board"></div>
+            <div id="chess-board" role="grid" aria-label="Chess board" tabindex="0"></div>
+            <div id="keyboard-announcements" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         </section>
         <aside id="game-info" class="hidden">
             <button id="sidebar-close-btn" aria-label="Close panel">&times;</button>
@@ -47,6 +48,7 @@
             <div id="difficulty-display">
                 <span id="difficulty-label"></span>
             </div>
+            <button id="undo-btn" class="hidden"><span class="btn-icon">↩</span> Undo</button>
             <button id="reset-btn"><span class="btn-icon">↻</span> Reset</button>
             <button id="back-to-menu-btn"><span class="btn-icon">←</span> Menu</button>
         </aside>
@@ -56,7 +58,7 @@
     <script type="importmap">
     {
         "imports": {
-            "chess.js": "./node_modules/chess.js/dist/esm/chess.js"
+            "chess.js": "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js"
         }
     }
     </script>

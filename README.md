@@ -5,7 +5,7 @@ A browser-based chess game built with vanilla HTML, CSS, and JavaScript. Play ag
 ## Features
 
 - **Two game modes**: 2-player local or vs Computer
-- **Computer opponent** with random move selection
+- **Computer opponent** with minimax AI (alpha-beta pruning, iterative deepening, quiescence search, opening book)
 - **Full chess rules**: check, checkmate, stalemate, draw detection, auto-promotion to queen
 - **Drag & drop** and click-to-move piece interaction
 - **Move hints**: valid move dots and capture rings shown on selection/drag
@@ -28,7 +28,8 @@ A browser-based chess game built with vanilla HTML, CSS, and JavaScript. Play ag
 ├── main.js             # App bootstrap, mode selection, game flow
 ├── engine.js           # ChessEngine wrapper around chess.js
 ├── ui.js               # ChessUI: board rendering, drag & drop, click handling, history
-├── ai.js               # Minimax AI with alpha-beta pruning (legacy, unused)
+├── simple-ai.js        # Minimax AI with alpha-beta pruning, iterative deepening, opening book
+├── utils.js            # Shared coordinate conversion utilities
 ├── style.css           # Board styling, responsive layout, animations
 ├── package.json        # Dependencies (chess.js)
 └── AGENTS.md           # Agent instructions for AI-assisted development
@@ -62,7 +63,7 @@ Then navigate to `http://localhost:3000`.
 Two players take turns on the same device. Click a piece to select it, then click the destination square. Alternatively, drag and drop pieces directly.
 
 ### vs Computer
-Play as White against the computer. The opponent makes random legal moves.
+Play as White against the computer. The AI uses minimax with alpha-beta pruning, iterative deepening, quiescence search, and an opening book. Four difficulty levels (Easy, Medium, Hard, Expert) control search depth and time limits.
 
 ## Controls
 

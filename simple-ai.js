@@ -1,4 +1,5 @@
 import { PIECES } from './engine.js';
+import { indexToAlgebraic, algebraicToIndex } from './utils.js';
 
 const PIECE_VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
 
@@ -65,14 +66,7 @@ const PST = {
     ]
 };
 
-const FILES = 'abcdefgh';
 const killerMoves = [[], [], [], []];
-
-function indexToAlgebraic(index) {
-    const rank = 8 - Math.floor(index / 8);
-    const file = FILES[index % 8];
-    return file + rank;
-}
 
 function evaluateBoard(chess, aiColor) {
     let score = 0;
@@ -136,10 +130,12 @@ function scoreMove(move) {
 
 function evaluateMoveAggression(move, chess, aiColor) {
     let score = 0;
-    const fromFile = 'abcdefgh'.indexOf(move.from[0]);
-    const fromRank = parseInt(move.from[1]);
-    const toFile = 'abcdefgh'.indexOf(move.to[0]);
-    const toRank = parseInt(move.to[1]);
+    const fromIdx = typeof move.from === 'number' ? move.from : algebraicToIndex(move.from);
+    const toIdx = typeof move.to === 'number' ? move.to : algebraicToIndex(move.to);
+    const fromFile = fromIdx % 8;
+    const fromRank = 8 - Math.floor(fromIdx / 8);
+    const toFile = toIdx % 8;
+    const toRank = 8 - Math.floor(toIdx / 8);
 
     const centerFiles = [3, 4];
     const centerRanks = [4, 5];
@@ -327,27 +323,27 @@ export function findBestMove(engine, color, difficulty) {
     }
 
     const depth = difficulty === 10 ? 1 : difficulty === 1094 ? 2 : difficulty === 1620 ? 3 : 99;
-    const timeLimit = difficulty === 10 ? 50 : difficulty === 1094 ? 300 : difficulty === 1620 ? 800 : 1500;
-    const quiesceDepth = difficulty === 10 ? 3 : difficulty === 1094 ? 4 : difficulty === 1620 ? 4 : 6;
+    const timeLimit = difficulty === 10 ? 250 : difficulty === 1094 ? 300 : difficulty === 1620 ? 800 : 1500;
+    const quiesceDepth = difficulty === 10 ? 2 : difficulty === 1094 ? 4 : difficulty === 1620 ? 4 : 6;
     const maxDepth = depth;
 
-    const chess = engine.chess;
+    const chess = engine.chessInstance;
     let bestMove = null;
     let bestScore = null;
     const isMaximizing = color === PIECES.BLACK;
 
     const startTime = Date.now();
 
-    // Depth 0 sweep — always completes, finds best move with quiescence + heuristics
+    const scoredMoves = [];
+
     for (const move of moves) {
         const cm = { from: indexToAlgebraic(move.from), to: indexToAlgebraic(move.to) };
         if (move.promotion) cm.promotion = move.promotion;
 
         chess.move(cm);
-        let s = minimax(chess, 0, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1);
+        let s = minimax(chess, difficulty === 10 ? depth : 0, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1);
         chess.undo();
 
-        // Heuristic bonuses
         if (cm.from === 'e1' && cm.to === 'g1' || cm.from === 'e8' && cm.to === 'g8') s += (isMaximizing ? 25 : -25);
         else if (cm.from === 'e1' && cm.to === 'c1' || cm.from === 'e8' && cm.to === 'c8') s += (isMaximizing ? 15 : -15);
         else if (['b1','g1','b8','g8'].includes(cm.from) && move.piece === 'n') s += (isMaximizing ? 15 : -15);
@@ -359,45 +355,64 @@ export function findBestMove(engine, color, difficulty) {
         const aggression = evaluateMoveAggression(move, chess, color);
         s += aggression * (isMaximizing ? 1 : -1);
 
+        scoredMoves.push({ move, score: s });
+
         if (bestScore === null || (isMaximizing ? s > bestScore : s < bestScore)) {
             bestScore = s; bestMove = move;
         }
     }
 
-    // Iterative deepening
-    const startD = difficulty === 2871 ? 3 : 1;
-    const ordered = orderMoves(moves, 0);
-    for (let d = startD; d <= depth; d++) {
-        let dbestMove = null, dbestScore = null, completed = true;
-
-        for (const move of ordered) {
-            if (Date.now() - startTime > timeLimit) { completed = false; break; }
-
-            const cm = { from: indexToAlgebraic(move.from), to: indexToAlgebraic(move.to) };
-            if (move.promotion) cm.promotion = move.promotion;
-
-            chess.move(cm);
-            let s = minimax(chess, d, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1);
-            chess.undo();
-
-            if (cm.from === 'e1' && cm.to === 'g1' || cm.from === 'e8' && cm.to === 'g8') s += (isMaximizing ? 25 : -25);
-            else if (cm.from === 'e1' && cm.to === 'c1' || cm.from === 'e8' && cm.to === 'c8') s += (isMaximizing ? 15 : -15);
-            else if (['b1','g1','b8','g8'].includes(cm.from) && move.piece === 'n') s += (isMaximizing ? 15 : -15);
-            else if (['c1','f1','c8','f8'].includes(cm.from) && move.piece === 'b') s += (isMaximizing ? 10 : -10);
-            else if (['d2','e2','d7','e7'].includes(cm.from) && move.piece === 'p') s += (isMaximizing ? 5 : -5);
-            else if (move.piece === 'p' && ['a2','h2','a7','h7'].includes(cm.from)) s += (isMaximizing ? -5 : 5);
-            else if (move.piece === 'q' && cm.from.match(/[de][18]/)) s += (isMaximizing ? -10 : 10);
-
-            const aggression = evaluateMoveAggression(move, chess, color);
-            s += aggression * (isMaximizing ? 1 : -1);
-
-            if (dbestScore === null || (isMaximizing ? s > dbestScore : s < dbestScore)) {
-                dbestScore = s; dbestMove = move;
-            }
+    if (difficulty === 10 && scoredMoves.length > 1) {
+        scoredMoves.sort((a, b) => b.score - a.score);
+        const topHalf = scoredMoves.slice(0, Math.ceil(scoredMoves.length / 2));
+        const minScore = topHalf[topHalf.length - 1].score;
+        const maxScore = topHalf[0].score;
+        const range = maxScore - minScore || 1;
+        const weights = topHalf.map(m => 1 + (m.score - minScore) / range);
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        let r = Math.random() * totalWeight;
+        for (let i = 0; i < topHalf.length; i++) {
+            r -= weights[i];
+            if (r <= 0) return topHalf[i].move;
         }
+        return topHalf[0].move;
+    }
 
-        if (dbestMove && completed) { bestMove = dbestMove; bestScore = dbestScore; }
-        if (!completed) break;
+    if (difficulty !== 10) {
+        const startD = difficulty === 2871 ? 3 : 1;
+        const ordered = orderMoves(moves, 0);
+        for (let d = startD; d <= depth; d++) {
+            let dbestMove = null, dbestScore = null, completed = true;
+
+            for (const move of ordered) {
+                if (Date.now() - startTime > timeLimit) { completed = false; break; }
+
+                const cm = { from: indexToAlgebraic(move.from), to: indexToAlgebraic(move.to) };
+                if (move.promotion) cm.promotion = move.promotion;
+
+                chess.move(cm);
+                let s = minimax(chess, d, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1);
+                chess.undo();
+
+                if (cm.from === 'e1' && cm.to === 'g1' || cm.from === 'e8' && cm.to === 'g8') s += (isMaximizing ? 25 : -25);
+                else if (cm.from === 'e1' && cm.to === 'c1' || cm.from === 'e8' && cm.to === 'c8') s += (isMaximizing ? 15 : -15);
+                else if (['b1','g1','b8','g8'].includes(cm.from) && move.piece === 'n') s += (isMaximizing ? 15 : -15);
+                else if (['c1','f1','c8','f8'].includes(cm.from) && move.piece === 'b') s += (isMaximizing ? 10 : -10);
+                else if (['d2','e2','d7','e7'].includes(cm.from) && move.piece === 'p') s += (isMaximizing ? 5 : -5);
+                else if (move.piece === 'p' && ['a2','h2','a7','h7'].includes(cm.from)) s += (isMaximizing ? -5 : 5);
+                else if (move.piece === 'q' && cm.from.match(/[de][18]/)) s += (isMaximizing ? -10 : 10);
+
+                const aggression = evaluateMoveAggression(move, chess, color);
+                s += aggression * (isMaximizing ? 1 : -1);
+
+                if (dbestScore === null || (isMaximizing ? s > dbestScore : s < dbestScore)) {
+                    dbestScore = s; dbestMove = move;
+                }
+            }
+
+            if (dbestMove && completed) { bestMove = dbestMove; bestScore = dbestScore; }
+            if (!completed) break;
+        }
     }
 
     return bestMove;

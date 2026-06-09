@@ -112,11 +112,23 @@ async function startGame(mode) {
         engine,
         (from, to) => handleMove(from, to),
         () => resetGame(),
-        mode
+        mode,
+        () => undoMoves()
     );
 
     document.getElementById('board-container').classList.remove('hidden');
 
+    ui.render();
+    startTurnTimer();
+}
+
+function undoMoves() {
+    if (gameMode !== 'computer') return;
+    if (engine.history.length < 2) return;
+
+    stopTurnTimer();
+    engine.undoMove();
+    engine.undoMove();
     ui.render();
     startTurnTimer();
 }
@@ -140,7 +152,9 @@ function handleMove(from, to) {
     const success = engine.move(from, to);
     if (success) {
         ui.render();
-        if (gameMode === 'computer' && !engine.gameOver && engine.turn === PIECES.BLACK) {
+        if (engine.gameOver) {
+            stopTurnTimer();
+        } else if (gameMode === 'computer' && engine.turn === PIECES.BLACK) {
             stopTurnTimer();
             setTimeout(() => makeComputerMove(), 100);
         } else {
@@ -158,7 +172,11 @@ function makeComputerMove() {
         engine.move(move.from, move.to);
     }
     ui.render();
-    startTurnTimer();
+    if (engine.gameOver) {
+        stopTurnTimer();
+    } else {
+        startTurnTimer();
+    }
 }
 
 function resetGame() {

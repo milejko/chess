@@ -1,8 +1,9 @@
 export class ChessUI {
-    constructor(engine, onMove, onReset, gameMode = '2p') {
+    constructor(engine, onMove, onReset, gameMode = '2p', onUndo) {
         this.engine = engine;
         this.onMove = onMove;
         this.onReset = onReset;
+        this.onUndo = onUndo;
         this.gameMode = gameMode;
         this.renderPending = false;
         
@@ -11,14 +12,39 @@ export class ChessUI {
         this.statusBarElement = document.getElementById('status-bar');
         this.historyListElement = document.getElementById('history-list');
         this.resetBtn = document.getElementById('reset-btn');
+        this.undoBtn = document.getElementById('undo-btn');
         this.capturedWhiteEl = document.getElementById('captured-white-list');
         this.capturedBlackEl = document.getElementById('captured-black-list');
 
         this.selectedSquare = null;
         this.validMoves = new Map();
 
+        this.focusedSquare = null;
+        this.keyboardAnnouncementEl = document.getElementById('keyboard-announcements');
+
+        this.dragSource = null;
+        this.dragValidMoves = new Map();
+        this.dragPreview = null;
+        this._pendingDrag = null;
+        this._suppressClick = false;
+
         this.resetBtn.addEventListener('click', () => this.onReset());
+        this.undoBtn.addEventListener('click', () => this.onUndo());
+
+        this.boardElement.addEventListener('click', (e) => {
+            if (this._suppressClick) {
+                e.stopImmediatePropagation();
+                this._suppressClick = false;
+            }
+        }, true);
+
         this.boardElement.addEventListener('click', (e) => this.handleBoardClick(e));
+        this.boardElement.addEventListener('mousedown', (e) => this.onMouseDown(e));
+        this.boardElement.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        document.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        document.addEventListener('mouseup', (e) => this.onMouseUp(e));
+
+        requestAnimationFrame(() => this.boardElement.focus());
     }
 
     render() {
@@ -30,7 +56,18 @@ export class ChessUI {
             this.updateStatus();
             this.renderCaptured();
             this.renderHistory();
+            this.updateUndoButton();
         });
+    }
+
+    updateUndoButton() {
+        if (this.gameMode !== 'computer') {
+            this.undoBtn.classList.add('hidden');
+            return;
+        }
+        this.undoBtn.classList.remove('hidden');
+        const historyLen = this.engine.history.length;
+        this.undoBtn.disabled = historyLen < 2; // need at least player move + computer response
     }
 
     renderBoard() {
@@ -44,8 +81,10 @@ export class ChessUI {
             square.classList.add('square');
             square.classList.add(isDark ? 'dark' : 'light');
             square.dataset.index = i;
+            square.id = 'square-' + i;
             square.setAttribute('role', 'gridcell');
             square.setAttribute('aria-label', this.getSquareName(i));
+            square.setAttribute('tabindex', '-1');
 
             if (this.selectedSquare === i) {
                 square.classList.add('selected');
@@ -69,6 +108,13 @@ export class ChessUI {
 
         this.boardElement.innerHTML = '';
         this.boardElement.appendChild(fragment);
+
+        if (this.focusedSquare !== null) {
+            this.boardElement.setAttribute('aria-activedescendant', 'square-' + this.focusedSquare);
+            const focusedEl = document.getElementById('square-' + this.focusedSquare);
+            if (focusedEl) focusedEl.focus();
+        }
+
         this.renderCoords();
     }
 
@@ -175,6 +221,123 @@ export class ChessUI {
         }
     }
 
+    onMouseDown(e) {
+        if (!this.canMove()) return;
+
+        const pieceEl = e.target.closest('.piece');
+        if (!pieceEl) return;
+
+        const square = pieceEl.closest('.square');
+        if (!square) return;
+
+        const index = parseInt(square.dataset.index);
+        const pieceData = this.engine.getPiece(index);
+        if (!pieceData || pieceData.color !== this.engine.turn) return;
+
+        e.preventDefault();
+
+        this._pendingDrag = {
+            index,
+            pieceEl,
+            startX: e.clientX,
+            startY: e.clientY
+        };
+    }
+
+    onMouseMove(e) {
+        if (this._pendingDrag && this.dragSource === null) {
+            const dx = e.clientX - this._pendingDrag.startX;
+            const dy = e.clientY - this._pendingDrag.startY;
+            if (Math.abs(dx) + Math.abs(dy) < 5) return;
+            this.startDrag(this._pendingDrag.index, this._pendingDrag.pieceEl, e);
+            this._pendingDrag = null;
+        }
+
+        if (this.dragSource === null) return;
+
+        if (this.dragPreview) {
+            this.dragPreview.style.left = e.clientX + 'px';
+            this.dragPreview.style.top = e.clientY + 'px';
+        }
+
+        this.boardElement.querySelectorAll('.square.drag-over').forEach(sq => {
+            sq.classList.remove('drag-over');
+        });
+
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        if (el) {
+            const sq = el.closest('.square');
+            if (sq && this.dragValidMoves.has(parseInt(sq.dataset.index))) {
+                sq.classList.add('drag-over');
+            }
+        }
+    }
+
+    onMouseUp(e) {
+        if (this._pendingDrag) {
+            this._pendingDrag = null;
+            return;
+        }
+
+        if (this.dragSource === null) return;
+
+        const from = this.dragSource;
+
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        let targetIndex = null;
+        if (el) {
+            const sq = el.closest('.square');
+            if (sq) {
+                targetIndex = parseInt(sq.dataset.index);
+            }
+        }
+
+        if (targetIndex !== null && this.dragValidMoves.has(targetIndex)) {
+            this.onMove(from, targetIndex);
+        }
+
+        this.cleanupDrag();
+    }
+
+    startDrag(index, pieceEl, e) {
+        this.dragSource = index;
+        this._suppressClick = true;
+
+        this.dragValidMoves.clear();
+        const moves = this.engine.getValidMovesForSquare(index);
+        for (const move of moves) {
+            this.dragValidMoves.set(move.to, { isCapture: !!move.captured });
+        }
+
+        pieceEl.classList.add('dragging');
+
+        for (const [moveIndex, moveInfo] of this.dragValidMoves) {
+            const targetSq = this.boardElement.querySelector(`.square[data-index="${moveIndex}"]`);
+            if (targetSq) {
+                targetSq.classList.add(moveInfo.isCapture ? 'capture-move' : 'valid-move');
+            }
+        }
+
+        this.dragPreview = document.createElement('div');
+        this.dragPreview.classList.add('drag-preview');
+        this.dragPreview.innerHTML = pieceEl.innerHTML;
+        document.body.appendChild(this.dragPreview);
+        this.dragPreview.style.left = e.clientX + 'px';
+        this.dragPreview.style.top = e.clientY + 'px';
+    }
+
+    cleanupDrag() {
+        if (this.dragPreview && this.dragPreview.parentNode) {
+            this.dragPreview.parentNode.removeChild(this.dragPreview);
+        }
+
+        this.dragSource = null;
+        this.dragValidMoves.clear();
+        this.dragPreview = null;
+
+        this.render();
+    }
+
     updateStatus() {
         const status = this.engine.getGameStatus();
         const turnIndicator = document.getElementById('turn-indicator');
@@ -255,5 +418,131 @@ export class ChessUI {
             p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚'
         };
         return `<span class="piece-symbol" data-color="${piece.color}">${symbols[piece.type]}</span>`;
+    }
+
+    handleKeyDown(e) {
+        const key = e.key;
+
+        if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight') {
+            e.preventDefault();
+            let currentIndex = this.focusedSquare;
+            if (currentIndex === null) {
+                currentIndex = 0;
+            }
+
+            let row = Math.floor(currentIndex / 8);
+            let col = currentIndex % 8;
+
+            if (key === 'ArrowLeft') {
+                col = (col - 1 + 8) % 8;
+            } else if (key === 'ArrowRight') {
+                col = (col + 1) % 8;
+            } else if (key === 'ArrowUp') {
+                row = Math.max(0, row - 1);
+            } else if (key === 'ArrowDown') {
+                row = Math.min(7, row + 1);
+            }
+
+            this.focusSquare(row * 8 + col);
+            return;
+        }
+
+        if (key === 'Enter' || key === ' ') {
+            e.preventDefault();
+            if (this.focusedSquare === null) return;
+            if (!this.canMove()) return;
+
+            const index = this.focusedSquare;
+
+            if (this.selectedSquare === null) {
+                const piece = this.engine.getPiece(index);
+                if (piece && piece.color === this.engine.turn) {
+                    this.selectedSquare = index;
+                    this.computeValidMoves();
+                    this.announceSelection(index, piece);
+                    this.render();
+                }
+            } else {
+                if (this.selectedSquare === index) {
+                    this.clearSelection();
+                    this.announce('Selection cleared');
+                    this.render();
+                } else {
+                    const from = this.selectedSquare;
+                    const fromPiece = this.engine.getPiece(from);
+                    const fromName = this.getSquareName(from);
+                    const toName = this.getSquareName(index);
+                    const pieceName = this.getPieceName(fromPiece);
+
+                    this.clearSelection();
+                    const success = this.onMove(from, index);
+                    if (success) {
+                        this.announce(pieceName + ' ' + fromName + ' to ' + toName);
+                    } else if (!this.engine.gameOver) {
+                        const nextPiece = this.engine.getPiece(index);
+                        if (nextPiece && nextPiece.color === this.engine.turn) {
+                            this.selectedSquare = index;
+                            this.computeValidMoves();
+                            this.announceSelection(index, nextPiece);
+                            this.render();
+                        } else {
+                            this.announce('Invalid move');
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        if (key === 'Escape') {
+            if (this.selectedSquare !== null) {
+                e.preventDefault();
+                this.clearSelection();
+                this.announce('Selection cleared');
+                this.render();
+            }
+            return;
+        }
+    }
+
+    focusSquare(index) {
+        if (index < 0 || index > 63) return;
+        this.focusedSquare = index;
+        this.boardElement.setAttribute('aria-activedescendant', 'square-' + index);
+        const squareEl = document.getElementById('square-' + index);
+        if (squareEl) {
+            squareEl.focus();
+            const piece = this.engine.getPiece(index);
+            const name = this.getSquareName(index);
+            if (piece) {
+                const colorName = piece.color === 'w' ? 'White' : 'Black';
+                const pieceName = this.getPieceName(piece);
+                this.announce(name + ', ' + colorName + ' ' + pieceName);
+            } else {
+                this.announce(name + ', empty');
+            }
+        }
+    }
+
+    announce(text) {
+        if (this.keyboardAnnouncementEl) {
+            this.keyboardAnnouncementEl.textContent = '';
+            setTimeout(() => {
+                this.keyboardAnnouncementEl.textContent = text;
+            }, 50);
+        }
+    }
+
+    announceSelection(index, piece) {
+        const colorName = piece.color === 'w' ? 'White' : 'Black';
+        const pieceName = this.getPieceName(piece);
+        const squareName = this.getSquareName(index);
+        this.announce(colorName + ' ' + pieceName + ' ' + squareName + ' selected');
+    }
+
+    getPieceName(piece) {
+        if (!piece) return '';
+        const names = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
+        return names[piece.type] || '';
     }
 }

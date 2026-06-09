@@ -147,6 +147,27 @@ body {
 .square.dark { background-color: var(--board-dark); }
 .square.selected { background-color: var(--highlight-color) !important; }
 
+.square:focus { outline: none; }
+
+.square:focus-visible {
+    outline: 3px solid #ffdd00;
+    outline-offset: -3px;
+    z-index: 5;
+}
+
+/* Visually hidden, accessible to screen readers */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* Sidebar */
 #game-info {
     display: flex;
@@ -208,6 +229,38 @@ body {
 .piece-symbol[data-color="b"] {
     color: #000000;
     text-shadow: 0 0 1px #ffffff;
+}
+
+/* Drag and drop */
+.piece.dragging {
+    opacity: 0.4;
+}
+
+.drag-preview {
+    position: fixed;
+    pointer-events: none;
+    z-index: 100;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transform: translate(-50%, -50%);
+}
+
+.drag-preview .piece-symbol {
+    font-size: clamp(2rem, 8vmin, 5.5rem);
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+}
+
+.square.drag-over {
+    background-color: rgba(255, 255, 0, 0.35) !important;
+}
+
+.square.drag-over.capture-move::after {
+    border-color: rgba(0, 0, 0, 0.35);
+}
+
+.square.drag-over.valid-move::after {
+    background-color: rgba(0, 0, 0, 0.3);
 }
 
 #game-header {
@@ -358,6 +411,31 @@ body {
 #difficulty-display span {
     font-size: 0.9rem;
     color: #ccc;
+}
+
+#undo-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.7rem;
+    background: #665544;
+    color: #ccc;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+#undo-btn:hover {
+    background: #887766;
+    color: #fff;
+}
+
+#undo-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 #reset-btn {
