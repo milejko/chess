@@ -1,7 +1,5 @@
-import { ChessEngine } from './engine.js';
+import { ChessEngine, PIECES } from './engine.js';
 import { ChessUI } from './ui.js';
-import { PIECES } from './engine.js';
-import { findBestMove } from './simple-ai.js';
 
 let engine;
 let ui;
@@ -9,6 +7,8 @@ let gameMode = null;
 let selectedDifficulty = 1094;
 let turnTimer = null;
 let turnStartTime = 0;
+let aiWorker = null;
+let pendingAiMoveId = null;
 const TURN_TIME = 30000;
 
 const DIFFICULTY_NAMES = { 10: 'Easy', 1094: 'Medium', 1620: 'Hard', 2871: 'Expert' };
@@ -93,6 +93,7 @@ function init() {
 
 async function startGame(mode) {
     gameMode = mode;
+    ui?.destroy();
     engine = new ChessEngine();
 
     document.getElementById('mode-selection').classList.add('hidden');
@@ -127,6 +128,8 @@ function undoMoves() {
     if (engine.history.length < 2) return;
 
     stopTurnTimer();
+    pendingAiMoveId = null;
+    ui?.setThinking(false);
     engine.undoMove();
     engine.undoMove();
     ui.render();
@@ -135,8 +138,11 @@ function undoMoves() {
 
 function backToMenu() {
     stopTurnTimer();
+    pendingAiMoveId = null;
+    ui?.setThinking(false);
     gameMode = null;
     engine = null;
+    ui?.destroy();
     ui = null;
 
     document.getElementById('mode-selection').classList.remove('hidden');
@@ -164,22 +170,43 @@ function handleMove(from, to) {
     return success;
 }
 
-function makeComputerMove() {
-    if (engine.gameOver || engine.turn !== PIECES.BLACK) return;
+function initWorker() {
+    if (aiWorker) return;
+    aiWorker = new Worker('ai-worker.js', { type: 'module' });
+    aiWorker.onmessage = (e) => {
+        const { id, move } = e.data;
+        if (id !== pendingAiMoveId) return;
+        pendingAiMoveId = null;
+        ui?.setThinking(false);
 
-    const move = findBestMove(engine, PIECES.BLACK, selectedDifficulty);
-    if (move) {
+        if (!move || !engine || engine.gameOver || engine.turn !== PIECES.BLACK) return;
         engine.move(move.from, move.to);
-    }
-    ui.render();
-    if (engine.gameOver) {
-        stopTurnTimer();
-    } else {
-        startTurnTimer();
-    }
+        ui?.render();
+        if (engine.gameOver) {
+            stopTurnTimer();
+        } else {
+            startTurnTimer();
+        }
+    };
+}
+
+function makeComputerMove() {
+    if (!engine || engine.gameOver || engine.turn !== PIECES.BLACK) return;
+    if (!aiWorker) initWorker();
+
+    pendingAiMoveId = crypto.randomUUID();
+    ui?.setThinking(true);
+    aiWorker.postMessage({
+        id: pendingAiMoveId,
+        fen: engine.chessInstance.fen(),
+        color: PIECES.BLACK,
+        difficulty: selectedDifficulty
+    });
 }
 
 function resetGame() {
+    pendingAiMoveId = null;
+    ui?.setThinking(false);
     engine.reset();
     ui.render();
     startTurnTimer();

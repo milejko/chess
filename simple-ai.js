@@ -1,4 +1,3 @@
-import { PIECES } from './engine.js';
 import { indexToAlgebraic, algebraicToIndex } from './utils.js';
 
 const PIECE_VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
@@ -65,8 +64,6 @@ const PST = {
        -35,-40,-40,-50,-50,-40,-40,-35
     ]
 };
-
-const killerMoves = [[], [], [], []];
 
 function evaluateBoard(chess, aiColor) {
     let score = 0;
@@ -168,13 +165,13 @@ function evaluateMoveAggression(move, chess, aiColor) {
     return score;
 }
 
-function orderMoves(moves, ply) {
+function orderMoves(moves, ply, killers) {
     return moves.sort((a, b) => {
         let aScore = scoreMove(a);
         let bScore = scoreMove(b);
 
-        const killerA = killerMoves[ply] && killerMoves[ply].includes(a.san);
-        const killerB = killerMoves[ply] && killerMoves[ply].includes(b.san);
+        const killerA = killers[ply] && killers[ply].includes(a.san);
+        const killerB = killers[ply] && killers[ply].includes(b.san);
         if (killerA) aScore += 2000;
         if (killerB) bScore += 2000;
 
@@ -185,9 +182,9 @@ function orderMoves(moves, ply) {
     });
 }
 
-function minimax(chess, depth, alpha, beta, isMaximizing, aiColor, quiesceDepth, ply) {
+function minimax(chess, depth, alpha, beta, isMaximizing, aiColor, quiesceDepth, ply, killers) {
     if (depth === 0) {
-        return quiesce(chess, alpha, beta, isMaximizing, aiColor, quiesceDepth);
+        return quiesce(chess, alpha, beta, isMaximizing, aiColor, quiesceDepth, killers);
     }
 
     const moves = chess.moves({ verbose: true });
@@ -196,21 +193,21 @@ function minimax(chess, depth, alpha, beta, isMaximizing, aiColor, quiesceDepth,
         return chess.inCheck() ? (isMaximizing ? -99999 + depth : 99999 - depth) : 0;
     }
 
-    const ordered = orderMoves(moves, ply);
+    const ordered = orderMoves(moves, ply, killers);
 
     if (isMaximizing) {
         let maxEval = -Infinity;
         for (const move of ordered) {
             chess.move(move);
-            const eval_ = minimax(chess, depth - 1, alpha, beta, false, aiColor, quiesceDepth, ply + 1);
+            const eval_ = minimax(chess, depth - 1, alpha, beta, false, aiColor, quiesceDepth, ply + 1, killers);
             chess.undo();
             if (eval_ > maxEval) maxEval = eval_;
             if (eval_ > alpha) alpha = eval_;
             if (eval_ >= beta) {
                 if (!move.captured) {
-                    if (!killerMoves[ply]) killerMoves[ply] = [];
-                    killerMoves[ply].unshift(move.san);
-                    if (killerMoves[ply].length > 3) killerMoves[ply].pop();
+                    if (!killers[ply]) killers[ply] = [];
+                    killers[ply].unshift(move.san);
+                    if (killers[ply].length > 3) killers[ply].pop();
                 }
                 return eval_;
             }
@@ -220,15 +217,15 @@ function minimax(chess, depth, alpha, beta, isMaximizing, aiColor, quiesceDepth,
         let minEval = Infinity;
         for (const move of ordered) {
             chess.move(move);
-            const eval_ = minimax(chess, depth - 1, alpha, beta, true, aiColor, quiesceDepth, ply + 1);
+            const eval_ = minimax(chess, depth - 1, alpha, beta, true, aiColor, quiesceDepth, ply + 1, killers);
             chess.undo();
             if (eval_ < minEval) minEval = eval_;
             if (eval_ < beta) beta = eval_;
             if (eval_ <= alpha) {
                 if (!move.captured) {
-                    if (!killerMoves[ply]) killerMoves[ply] = [];
-                    killerMoves[ply].unshift(move.san);
-                    if (killerMoves[ply].length > 3) killerMoves[ply].pop();
+                    if (!killers[ply]) killers[ply] = [];
+                    killers[ply].unshift(move.san);
+                    if (killers[ply].length > 3) killers[ply].pop();
                 }
                 return eval_;
             }
@@ -237,7 +234,7 @@ function minimax(chess, depth, alpha, beta, isMaximizing, aiColor, quiesceDepth,
     }
 }
 
-function quiesce(chess, alpha, beta, isMaximizing, aiColor, depthLeft) {
+function quiesce(chess, alpha, beta, isMaximizing, aiColor, depthLeft, killers) {
     const standPat = evaluateBoard(chess, aiColor);
 
     if (isMaximizing) {
@@ -251,13 +248,13 @@ function quiesce(chess, alpha, beta, isMaximizing, aiColor, depthLeft) {
     if (depthLeft === 0) return standPat;
 
     let moves = chess.moves({ verbose: true }).filter(m => m.captured || m.san.includes('+'));
-    const ordered = orderMoves(moves, 999);
+    const ordered = orderMoves(moves, 999, killers);
 
     let bestScore = standPat;
 
     for (const move of ordered) {
         chess.move(move);
-        const eval_ = quiesce(chess, alpha, beta, !isMaximizing, aiColor, depthLeft - 1);
+        const eval_ = quiesce(chess, alpha, beta, !isMaximizing, aiColor, depthLeft - 1, killers);
         chess.undo();
 
         if (isMaximizing) {
@@ -304,14 +301,22 @@ function getOpeningKey(fen) {
     return key;
 }
 
-export function findBestMove(engine, color, difficulty) {
-    const moves = engine.getAllValidMoves(color);
-    if (moves.length === 0) return null;
+export function findBestMoveForChess(chess, color, difficulty) {
+    if (chess.turn() !== color) return null;
 
-    killerMoves.length = 0;
-    for (let i = 0; i < 32; i++) killerMoves[i] = [];
+    const chessMoves = chess.moves({ verbose: true });
+    if (chessMoves.length === 0) return null;
 
-    const fen = engine.chess.fen();
+    const moves = chessMoves.map(m => ({
+        ...m,
+        from: algebraicToIndex(m.from),
+        to: algebraicToIndex(m.to)
+    }));
+
+    const killers = [];
+    for (let i = 0; i < 32; i++) killers[i] = [];
+
+    const fen = chess.fen();
     const bookKey = getOpeningKey(fen);
 
     if (OPENING_BOOK[bookKey] && Math.random() < 0.8) {
@@ -325,12 +330,10 @@ export function findBestMove(engine, color, difficulty) {
     const depth = difficulty === 10 ? 1 : difficulty === 1094 ? 2 : difficulty === 1620 ? 3 : 99;
     const timeLimit = difficulty === 10 ? 250 : difficulty === 1094 ? 300 : difficulty === 1620 ? 800 : 1500;
     const quiesceDepth = difficulty === 10 ? 2 : difficulty === 1094 ? 4 : difficulty === 1620 ? 4 : 6;
-    const maxDepth = depth;
 
-    const chess = engine.chessInstance;
     let bestMove = null;
     let bestScore = null;
-    const isMaximizing = color === PIECES.BLACK;
+    const isMaximizing = color === 'b';
 
     const startTime = Date.now();
 
@@ -341,7 +344,7 @@ export function findBestMove(engine, color, difficulty) {
         if (move.promotion) cm.promotion = move.promotion;
 
         chess.move(cm);
-        let s = minimax(chess, difficulty === 10 ? depth : 0, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1);
+        let s = minimax(chess, difficulty === 10 ? depth : 0, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1, killers);
         chess.undo();
 
         if (cm.from === 'e1' && cm.to === 'g1' || cm.from === 'e8' && cm.to === 'g8') s += (isMaximizing ? 25 : -25);
@@ -380,7 +383,7 @@ export function findBestMove(engine, color, difficulty) {
 
     if (difficulty !== 10) {
         const startD = difficulty === 2871 ? 3 : 1;
-        const ordered = orderMoves(moves, 0);
+        const ordered = orderMoves(moves, 0, killers);
         for (let d = startD; d <= depth; d++) {
             let dbestMove = null, dbestScore = null, completed = true;
 
@@ -391,7 +394,7 @@ export function findBestMove(engine, color, difficulty) {
                 if (move.promotion) cm.promotion = move.promotion;
 
                 chess.move(cm);
-                let s = minimax(chess, d, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1);
+                let s = minimax(chess, d, -Infinity, Infinity, !isMaximizing, color, quiesceDepth, 1, killers);
                 chess.undo();
 
                 if (cm.from === 'e1' && cm.to === 'g1' || cm.from === 'e8' && cm.to === 'g8') s += (isMaximizing ? 25 : -25);
@@ -416,4 +419,8 @@ export function findBestMove(engine, color, difficulty) {
     }
 
     return bestMove;
+}
+
+export function findBestMove(engine, color, difficulty) {
+    return findBestMoveForChess(engine.chessInstance, color, difficulty);
 }

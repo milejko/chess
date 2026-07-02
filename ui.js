@@ -11,6 +11,7 @@ export class ChessUI {
         this.statusElement = document.getElementById('status');
         this.statusBarElement = document.getElementById('status-bar');
         this.historyListElement = document.getElementById('history-list');
+        this.historyScrollElement = document.getElementById('history-scroll');
         this.resetBtn = document.getElementById('reset-btn');
         this.undoBtn = document.getElementById('undo-btn');
         this.capturedWhiteEl = document.getElementById('captured-white-list');
@@ -18,6 +19,10 @@ export class ChessUI {
 
         this.selectedSquare = null;
         this.validMoves = new Map();
+
+        this._capturedWhite = [];
+        this._capturedBlack = [];
+        this._lastHistoryLength = 0;
 
         this.focusedSquare = null;
         this.keyboardAnnouncementEl = document.getElementById('keyboard-announcements');
@@ -27,27 +32,54 @@ export class ChessUI {
         this.dragPreview = null;
         this._pendingDrag = null;
         this._suppressClick = false;
+        this._isDragging = false;
+        this._renderQueued = false;
 
-        this.resetBtn.addEventListener('click', () => this.onReset());
-        this.undoBtn.addEventListener('click', () => this.onUndo());
+        this.initBoard();
 
-        this.boardElement.addEventListener('click', (e) => {
+        this._onResetClick = () => this.onReset();
+        this._onUndoClick = () => this.onUndo();
+        this._onCaptureClick = (e) => {
             if (this._suppressClick) {
                 e.stopImmediatePropagation();
                 this._suppressClick = false;
             }
-        }, true);
+        };
+        this._onBoardClick = (e) => this.handleBoardClick(e);
+        this._onMouseDown = (e) => this.onMouseDown(e);
+        this._onKeyDown = (e) => this.handleKeyDown(e);
+        this._onMouseMove = (e) => this.onMouseMove(e);
+        this._onMouseUp = (e) => this.onMouseUp(e);
 
-        this.boardElement.addEventListener('click', (e) => this.handleBoardClick(e));
-        this.boardElement.addEventListener('mousedown', (e) => this.onMouseDown(e));
-        this.boardElement.addEventListener('keydown', (e) => this.handleKeyDown(e));
-        document.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        document.addEventListener('mouseup', (e) => this.onMouseUp(e));
+        this.resetBtn.addEventListener('click', this._onResetClick);
+        this.undoBtn.addEventListener('click', this._onUndoClick);
+        this.boardElement.addEventListener('click', this._onCaptureClick, true);
+        this.boardElement.addEventListener('click', this._onBoardClick);
+        this.boardElement.addEventListener('mousedown', this._onMouseDown);
+        this.boardElement.addEventListener('keydown', this._onKeyDown);
+        document.addEventListener('mousemove', this._onMouseMove);
+        document.addEventListener('mouseup', this._onMouseUp);
 
         requestAnimationFrame(() => this.boardElement.focus());
     }
 
+    destroy() {
+        this.resetBtn.removeEventListener('click', this._onResetClick);
+        this.undoBtn.removeEventListener('click', this._onUndoClick);
+        this.boardElement.removeEventListener('click', this._onCaptureClick, true);
+        this.boardElement.removeEventListener('click', this._onBoardClick);
+        this.boardElement.removeEventListener('mousedown', this._onMouseDown);
+        this.boardElement.removeEventListener('keydown', this._onKeyDown);
+        document.removeEventListener('mousemove', this._onMouseMove);
+        document.removeEventListener('mouseup', this._onMouseUp);
+        this.cleanupDrag();
+    }
+
     render() {
+        if (this._isDragging) {
+            this._renderQueued = true;
+            return;
+        }
         if (this.renderPending) return;
         this.renderPending = true;
         requestAnimationFrame(() => {
@@ -70,52 +102,78 @@ export class ChessUI {
         this.undoBtn.disabled = historyLen < 2; // need at least player move + computer response
     }
 
-    renderBoard() {
+    setThinking(isThinking) {
+        const indicator = document.getElementById('turn-indicator');
+        if (isThinking) {
+            indicator?.classList.add('thinking');
+            this.statusElement.textContent = 'Computer is thinking…';
+        } else {
+            indicator?.classList.remove('thinking');
+        }
+    }
+
+    initBoard() {
         const fragment = document.createDocumentFragment();
         for (let i = 0; i < 64; i++) {
             const square = document.createElement('div');
             const row = Math.floor(i / 8);
             const col = i % 8;
             const isDark = (row + col) % 2 === 1;
-            
-            square.classList.add('square');
-            square.classList.add(isDark ? 'dark' : 'light');
+
+            square.classList.add('square', isDark ? 'dark' : 'light');
             square.dataset.index = i;
             square.id = 'square-' + i;
             square.setAttribute('role', 'gridcell');
             square.setAttribute('aria-label', this.getSquareName(i));
             square.setAttribute('tabindex', '-1');
-
-            if (this.selectedSquare === i) {
-                square.classList.add('selected');
-            }
-
-            if (this.validMoves.has(i)) {
-                const { isCapture } = this.validMoves.get(i);
-                square.classList.add(isCapture ? 'capture-move' : 'valid-move');
-            }
-
-            const piece = this.engine.getPiece(i);
-            if (piece) {
-                const pieceElement = document.createElement('div');
-                pieceElement.classList.add('piece');
-                pieceElement.innerHTML = this.getPieceSVG(piece);
-                square.appendChild(pieceElement);
-            }
-
             fragment.appendChild(square);
         }
 
         this.boardElement.innerHTML = '';
         this.boardElement.appendChild(fragment);
+        this.renderCoords();
+    }
+
+    renderBoard() {
+        const board = this.engine.getBoard();
+        for (let i = 0; i < 64; i++) {
+            const square = this.boardElement.querySelector(`.square[data-index="${i}"]`);
+            if (!square) continue;
+
+            square.classList.remove('selected', 'valid-move', 'capture-move');
+            if (this.selectedSquare === i) {
+                square.classList.add('selected');
+            }
+            if (this.validMoves.has(i)) {
+                const { isCapture } = this.validMoves.get(i);
+                square.classList.add(isCapture ? 'capture-move' : 'valid-move');
+            }
+
+            const piece = board[i];
+            const pieceEl = square.querySelector('.piece');
+            if (!piece) {
+                if (pieceEl) pieceEl.remove();
+            } else {
+                const symbolEl = pieceEl?.querySelector('.piece-symbol');
+                const currentType = symbolEl?.dataset.type;
+                const currentColor = symbolEl?.dataset.color;
+                if (!pieceEl || currentType !== piece.type || currentColor !== piece.color) {
+                    if (pieceEl) pieceEl.remove();
+                    const newPieceEl = document.createElement('div');
+                    newPieceEl.classList.add('piece');
+                    newPieceEl.innerHTML = this.getPieceSVG(piece);
+                    square.appendChild(newPieceEl);
+                }
+            }
+        }
 
         if (this.focusedSquare !== null) {
             this.boardElement.setAttribute('aria-activedescendant', 'square-' + this.focusedSquare);
             const focusedEl = document.getElementById('square-' + this.focusedSquare);
-            if (focusedEl) focusedEl.focus();
+            if (focusedEl && document.activeElement !== focusedEl) {
+                focusedEl.focus();
+            }
         }
-
-        this.renderCoords();
     }
 
     renderCoords() {
@@ -301,6 +359,7 @@ export class ChessUI {
 
     startDrag(index, pieceEl, e) {
         this.dragSource = index;
+        this._isDragging = true;
         this._suppressClick = true;
 
         this.dragValidMoves.clear();
@@ -334,8 +393,13 @@ export class ChessUI {
         this.dragSource = null;
         this.dragValidMoves.clear();
         this.dragPreview = null;
+        this._isDragging = false;
 
         this.render();
+        if (this._renderQueued) {
+            this._renderQueued = false;
+            this.render();
+        }
     }
 
     updateStatus() {
@@ -360,28 +424,44 @@ export class ChessUI {
     renderCaptured() {
         const symbols = { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' };
         const pieceOrder = { q: 0, r: 1, b: 2, n: 3, p: 4 };
+        const history = this.engine.history;
+        const newLen = history.length;
 
-        const whiteCaptured = [];
-        const blackCaptured = [];
-
-        this.engine.history.forEach(move => {
-            if (move.captured) {
-                if (move.captured.color === 'w') {
-                    blackCaptured.push(move.captured);
-                } else {
-                    whiteCaptured.push(move.captured);
+        if (newLen !== this._lastHistoryLength) {
+            if (newLen < this._lastHistoryLength) {
+                this._capturedWhite = [];
+                this._capturedBlack = [];
+                for (const move of history) {
+                    if (move.captured) {
+                        if (move.captured.color === 'w') {
+                            this._capturedBlack.push(move.captured);
+                        } else {
+                            this._capturedWhite.push(move.captured);
+                        }
+                    }
+                }
+            } else {
+                for (let i = this._lastHistoryLength; i < newLen; i++) {
+                    const move = history[i];
+                    if (move.captured) {
+                        if (move.captured.color === 'w') {
+                            this._capturedBlack.push(move.captured);
+                        } else {
+                            this._capturedWhite.push(move.captured);
+                        }
+                    }
                 }
             }
-        });
+            this._lastHistoryLength = newLen;
+            this._capturedWhite.sort((a, b) => pieceOrder[a.type] - pieceOrder[b.type]);
+            this._capturedBlack.sort((a, b) => pieceOrder[a.type] - pieceOrder[b.type]);
+        }
 
-        whiteCaptured.sort((a, b) => pieceOrder[a.type] - pieceOrder[b.type]);
-        blackCaptured.sort((a, b) => pieceOrder[a.type] - pieceOrder[b.type]);
-
-        this.capturedWhiteEl.innerHTML = whiteCaptured.map(p =>
+        this.capturedWhiteEl.innerHTML = this._capturedWhite.map(p =>
             `<span class="captured-piece" style="color:#000;text-shadow:0 0 1px #fff">${symbols[p.type]}</span>`
         ).join('');
 
-        this.capturedBlackEl.innerHTML = blackCaptured.map(p =>
+        this.capturedBlackEl.innerHTML = this._capturedBlack.map(p =>
             `<span class="captured-piece" style="color:#fff;text-shadow:0 0 2px #000">${symbols[p.type]}</span>`
         ).join('');
     }
@@ -404,6 +484,10 @@ export class ChessUI {
             }
             this.historyListElement.appendChild(li);
         });
+
+        if (this.historyScrollElement) {
+            this.historyScrollElement.scrollTop = this.historyScrollElement.scrollHeight;
+        }
     }
 
     getSquareName(index) {
@@ -417,7 +501,7 @@ export class ChessUI {
         const symbols = {
             p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚'
         };
-        return `<span class="piece-symbol" data-color="${piece.color}">${symbols[piece.type]}</span>`;
+        return `<span class="piece-symbol" data-type="${piece.type}" data-color="${piece.color}">${symbols[piece.type]}</span>`;
     }
 
     handleKeyDown(e) {

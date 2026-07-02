@@ -328,6 +328,16 @@ body {
 #turn-indicator.turn-white { background: #fff; }
 #turn-indicator.turn-black { background: #111; }
 
+#turn-indicator.thinking {
+    background: #81b64c;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 #status {
     font-size: 1rem;
     line-height: 1;
